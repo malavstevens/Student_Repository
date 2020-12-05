@@ -2,240 +2,229 @@
 
 import os
 import sqlite3
-import collections
 from collections import defaultdict
 from prettytable import PrettyTable
-from typing import Dict, DefaultDict, Tuple, List, Iterator
+from typing import Dict, DefaultDict, Tuple, List, Iterator, Set
+import csv
 
 
 class Repository:
-    def __init__(self, dir_path: str) -> None:
-        self._dir_path: str = dir_path
-        self._stud: Dict[str, str] = dict()
-        self._instruct: Dict[str, str] = dict()
-        self._maj: Dict[str, str] = dict()
-        os.chdir(self._dir_path)
-        self.file_list = os.listdir()
-        cwd: str = os.getcwd()
+    "Major, Student and Instructor repository"
+
+    def __init__(self, path: str, tables: bool = True) -> None:
+        self._path: str = path
+        self._students: Dict[str, Student] = dict()
+        self._instructors: Dict[str, Instructor] = dict()
+        self._majors: Dict[str, Major] = dict()
 
         try:
-            self.majors(os.path.join(cwd, 'majors.txt'))
-            self.students(os.path.join(cwd, 'students.txt'))
-            self.instructor(os.path.join(cwd, 'instructors.txt'))
-            self.grades(os.path.join(cwd, 'grades.txt'))
+            self._get_majors(os.path.join(path, 'majors.txt'))
+            self._get_students(os.path.join(path, 'students.txt'))
+            self._get_instructors(os.path.join(path, 'instructors.txt'))
+            self._get_grades(os.path.join(path, 'grades.txt'))
 
         except (FileNotFoundError, ValueError) as e:
             print(e)
 
-    def majors(self, path) -> None:
-        for mjor, flag, course in self.file_reading(path, 3, header=True, sep='\t'):
-            if mjor not in self._maj:
-                self._maj[mjor] = Major(mjor)
-            self._maj[mjor].add_major(course, flag)
-
-    def instructor(self, path) -> None:
-        """ Instructor detail """
-        for cwid, name, deptarment in self.file_reading(path, 3, header=True, sep='\t'):
-            self._instruct[cwid] = Instructor(cwid, name, deptarment)
-
-    def students(self, path) -> None:
-        """ Student detail """
-        for cwid, name, major in self.file_reading(path, 3, header=True, sep='\t'):
-            self._stud[cwid] = Student(
-                cwid, name, major, self._maj[major].get_req(), self._maj[major].get_elec())
-
-    def grades(self, path) -> None:
-        """Grades details to map with student and instructor"""
-        for std_cwid, course, grade, instructor_cwid in self.file_reading(path, 4, header=True, sep='\t'):
-            if instructor_cwid in self._instruct:
-                self._instruct[instructor_cwid].add_student_to_course(course)
-            else:
-                print(
-                    f'The Grade file Contains a instructor {instructor_cwid} who is not in instructor file')
-            if std_cwid in self._stud:
-                self._stud[std_cwid].add_coursework(course, grade)
-            else:
-                print(
-                    f'The Grade file contains a student {std_cwid} who is not in student file')
-
-    def file_reading(self, path: str, fields: int, header, sep: str = ',') -> Iterator[List[str]]:
-        if not isinstance(path, str):
-            raise ValueError("Path is Not a string")
-        if not isinstance(fields, int):
-            raise ValueError("Fields is Not a Integer")
-        try:
-            fp: IO = open(path, 'r')
-            base = os.path.basename(path)
-        except FileNotFoundError:
-            print("No file in such directory")
         else:
-            with fp:
-                if header:
-                    next(fp)
-                for n, line in enumerate(fp, 1):
-                    line = line.strip()
-                    if line.count(sep) == fields-1:
-                        yield tuple(line.split(sep))
-                    else:
-                        raise ValueError(
-                            f"{base} has {line.count(sep) + 1} fields on line {n} but expected {fields} ")
+            if tables:
+                print("\nMajors Table")
+                self.majors_table()
+                print("\nStudent Table ")
+                self.student_table()
+                print("\nInstructor Table ")
+                self.instructor_table()
+                print('\nStudent Grade Summary')
+                self.instructor_table_db()
 
-    def stud_table(self) -> None:
-        """to display Student table """
-        student_tab = PrettyTable()
-        student_tab.field_names = [
-            'CWID', 'Name', 'Majors', 'Completed Courses', 'Remaininig Courses', 'Remaining Elective', 'GPA']
-        for student in self._stud.values():
-            student_tab.add_row(student.details())
-        print("\n")
-        print("Student Summary")
-        print(student_tab)
+    def _get_majors(self, path: str) -> None:
+        """Major details are read using file reading gen and added to dictionary"""
+        for major, flag, course in file_reader(path, 3, sep='\t', header=True):
+            if major not in self._majors:
+                self._majors[major] = Major(major)
+            self._majors[major].add_course(course, flag)
 
-    def instruct_table(self) -> None:
-        """ to display Instructor table """
-        instructor_tab = PrettyTable()
-        instructor_tab.field_names = [
-            'CWID', 'Name', 'Deptarment', 'Course', 'Students']
-        for instructor in self._instruct.values():
-            for row in instructor.details():
-                instructor_tab.add_row(row)
-        print("\n")
-        print("Instructor Summary")
-        print(instructor_tab)
+    def _get_students(self, path: str) -> None:
+        """ Student detail are read using file reading gen and added to dictionary """
+        for cwid, name, major in file_reader(path, 3, sep='\t', header=True):
+            if major not in self._majors:
+                print(f"Student {cwid} '{name}' has unknown major '{major}'")
+            else:
+                self._students[cwid] = Student(cwid, name, self._majors[major])
 
-    def major_tab(self) -> None:
-        m_tab = PrettyTable()
-        m_tab.field_names = ['Major', 'Required courses', 'Elective']
-        for mj in self._maj.values():
-            m_tab.add_row(mj.details())
-        print("Major Summary")
-        print(m_tab)
+    def _get_instructors(self, path: str) -> None:
+        """ Instructor detail are read using file reading gen and added to dictionary """
+        for cwid, name, dept in file_reader(path, 3, sep='\t', header=True):
+            self._instructors[cwid] = Instructor(cwid, name, dept)
 
-    def student_grade_table_db(self, db_path):
-        ptgrades: PrettyTable = PrettyTable()
-        ptgrades.field_names = ['Name', 'CWID',
-                                'Course', 'Grade', 'Instructor']
-        db: sqlite3.Connection = sqlite3.connect(db_path)
-        for row in db.execute("SELECT (s.Name) as 'Student',(s.CWID) as 'CWID',(g.Course) as 'In_Course',(g.Grade) as 'Earned_grade',(i.Name) as 'Thought_by' from students as s inner join grades as g on s.CWID = g.StudentCWID inner join instructors i on g.InstructorCWID = i.CWID ORDER BY s.Name"):
-            ptgrades.add_row(row)
-        print("\n")
-        print("Grades Summary")
-        print(ptgrades)
+    def _get_grades(self, path: str) -> None:
+        """Grades are read using file reading gen and assigned to student and instructor """
+        for std_cwid, course, grade, instructor_cwid in file_reader(path, 4, sep='\t', header=True):
+            if std_cwid in self._students:
+                self._students[std_cwid].add_course(course, grade)
+            else:
+                print(f'Grades for student is {std_cwid}')
+
+            if instructor_cwid in self._instructors:
+                self._instructors[instructor_cwid].add_student(course)
+            else:
+                print(f'Grades for instructor is {instructor_cwid}')
+
+    def majors_table(self) -> None:
+        """ Majors table """
+        table: PrettyTable = PrettyTable(field_names=Major.FIELD_NAMES)
+        for major in self._majors.values():
+            table.add_row(major.info())
+        print(table)
+
+    def student_table(self) -> None:
+        """ Student table """
+        table: PrettyTable = PrettyTable(field_names=Student.FIELD_NAMES)
+        for student in self._students.values():
+            table.add_row(student.info())
+        print(table)
+
+    def instructor_table(self) -> None:
+        """ Instructor table """
+        table: PrettyTable = PrettyTable(field_names=Instructor.FIELD_NAMES)
+        for instructor in self._instructors.values():
+            for row in instructor.info():
+                table.add_row(row)
+        print(table)
+
+    def instructor_table_db(self, db_path: str = "HW11_Test\810_startup.db") -> None:
+        """ Database table """
+
+        try:
+            db = sqlite3.connect(db_path)
+        except (FileNotFoundError, ValueError) as e:
+            print(e)
+
+        table: PrettyTable = PrettyTable(
+            field_names=['Name', 'CWID', 'Course', 'Grade', 'Instructor'])
+        for row in db.execute("select students.Name, students.CWID, grades.Course, grades.Grade, instructors.Name from students,grades,instructors where students.CWID=StudentCWID and InstructorCWID=instructors.CWID order by students.Name"):
+            table.add_row(row)
+        print(table)
 
 
 class Major:
+    """ Major Class """
+    FIELD_NAMES: List[str] = ['Major', 'Required Courses', 'Electives']
+    GRADES: Set[str] = {'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C'}
+
     def __init__(self, major: str) -> None:
-        self._major = major
-        self.required_course = list()
-        self.elective_course = list()
+        self._major: str = major
+        self._required: Set[str] = set()
+        self._electives: Set[str] = set()
 
-    def add_major(self, course, fl) -> None:
-        if fl == 'R':
-            self.required_course.append(course)
-        elif fl == 'E':
-            self.elective_course.append(course)
+    def add_course(self, course: str, option: str) -> None:
+        if option == 'R':
+            self._required.add(course)
+        elif option == 'E':
+            self._electives.add(course)
         else:
-            print(f"the data flag {fl} is not in use")
+            raise ValueError("Course Flag not Valid")
 
-    def get_req(self) -> List[str]:
-        return list(self.required_course)
+    def remaining(self, completed: Dict[str, str]) -> Tuple[str, List[str], List[str], List[str]]:
+        """Adding remaining courses as well as electives"""
+        passed: Set[str] = {course for course,
+                            grade in completed.items() if grade in Major.GRADES}
+        remaining: Set[str] = self._required - passed
+        electives: Set[str] = self._electives
 
-    def get_elec(self) -> List[str]:
-        return list(self.elective_course)
+        if self._electives.intersection(passed):
+            electives = []
 
-    def details(self) -> Tuple[str, str, List[str]]:
-        """ return vale to display in table """
-        return [self._major, sorted(self.required_course), sorted(self.elective_course)]
+        return self._major, list(passed), list(remaining), list(electives)
+
+    def info(self) -> Tuple[str, List[str], List[str]]:
+        """ Returning a row in table """
+        return [self._major, sorted(self._required), sorted(self._electives)]
 
 
 class Student:
-    """store student data"""
+    """Student Class """
+    FIELD_NAMES: List[str] = ['CWID', 'Name', 'Major',
+                              'Completed Courses', 'Remaining Required', 'Remaining Electives', 'GPA']
 
-    def __init__(self, cwid: str, name: str, major: str, required: str, electives: str) -> None:
+    def __init__(self, cwid: str, name: str, major: str) -> None:
         self._cwid: str = cwid
         self._name: str = name
         self._major: str = major
         self._courses: Dict[str, str] = dict()
-        self._remaining_req: List[str] = required
-        self._remaining_elec: List[str] = electives
-        self._grade: Dict[str, float] = {
-            'A': 4.0, 'A-': 3.75, 'B+': 3.25, 'B': 3.0, 'B-': 2.75, 'C+': 2.25, 'C': 2.0}
-        self._smry_st:  Dict[str, str] = dict()
 
-    def add_coursework(self, course: str, grade: str) -> None:
-        """ grads and course are added """
-        self._smry_st[course] = grade
-        if grade in self._grade.keys():
-            self._courses[course] = grade
-        else:
-            return self._courses
+    def add_course(self, course: str, grade: str) -> None:
+        """ Adding course with grade """
+        self._courses[course] = grade
 
-    def calculate_GPA(self, gd: Dict[str, int]) -> float or str:
-        sum: float = 0.00
-        count: int = 0
-        isEmpty = not gd
-        if isEmpty == True:
-            return 0.00
+    def gpa(self) -> float:
+        """Calculate the GPA using dictionary"""
+        grades: Dict[str, float] = {'A': 4.0, 'A-': 3.75, 'B+': 3.25, 'B': 3.0, 'B-': 2.75,
+                                    'C+': 2.25, 'C': 2.0, "C-": 0.00, "D+": 0.00, "D": 0.00, "D-": 0.00, "F": 0.00}
+        try:
+            total: float = sum(
+                [grades[grade] for grade in self._courses.values()]) / len(self._courses.values())
+            return round(total, 2)
+        except ZeroDivisionError as e:
+            print(e)
 
-        for k, v in gd.items():
-            if v == '':
-                count = -1
-                continue
-            if v in self._grade:
-                sum = sum+self._grade[v]
-                count += 1
-            else:
-                count += 1
-        if count == -1:
-            return "NA"
-        elif count == 0:
-            return 0.00
-        return format((sum/count), '.2f')
+    def info(self) -> Tuple[str, str, str, List[str], List[str], List[str]]:
+        """ return a list of information needed for pretty table """
+        major, passed, remaining, electives = self._major.remaining(
+            self._courses)
 
-    def cal_remaining_course(self, required_cors, completed_cors) -> List[str]:
-        remaining_course_left: list()
-        remaining_course_left = required_cors-completed_cors
-        return remaining_course_left
-
-    def cal_elective(self, elected_corse, completed_cors) -> List[str]:
-        for n in elected_corse:
-            for m in list(completed_cors):
-                if n == m:
-                    return []
-        return elected_corse
-
-    def details(self) -> Tuple[str, str, List[str], List[str], List[str], int]:
-        """ return vale to display in table """
-        return [self._cwid, self._name, self._major, sorted(self._courses.keys()), sorted(self.cal_remaining_course(self._remaining_req, self._courses.keys())), sorted(self.cal_elective(self._remaining_elec, self._courses.keys())), self.calculate_GPA(self._smry_st)]
+        return [self._cwid, self._name, major, sorted(passed), sorted(remaining), sorted(electives), self.gpa()]
 
 
 class Instructor:
-    """ store Instructor data """
+    """ Instructor class """
+    FIELD_NAMES: List[str] = ['CWID', 'Name', 'Dept', 'Course', 'Students']
 
-    def __init__(self, cwid: str, name: str, deptarment: str) -> None:
+    def __init__(self, cwid: str, name: str, dept: str) -> None:
+
         self._cwid: str = cwid
         self._name: str = name
-        self._deptarment: str = deptarment
+        self._dept: str = dept
         self._courses: DefaultDict[str, int] = defaultdict(int)
 
-    def add_student_to_course(self, course: str) -> None:
-        """ map the course with student """
+    def add_student(self, course: str) -> None:
+        """ Number of students taking course with Instructor """
         self._courses[course] += 1
 
-    def details(self) -> Iterator[Tuple[str, str, str, str, int]]:
-        """ Yield  to display in table """
+    def info(self) -> Iterator[Tuple[str, str, str, str, int]]:
+        """ Yield the row """
         for course, count in self._courses.items():
-            yield [self._cwid, self._name, self._deptarment, course, count]
+            yield [self._cwid, self._name, self._dept, course, count]
+
+
+def file_reader(path: str, fields: int, sep: str = ',', header: bool = False) -> Iterator[Tuple[str]]:
+    """ A generator function to read text files and return all of the values"""
+
+    try:
+        file_path = open(path, 'r')
+    except FileNotFoundError:
+        raise FileNotFoundError("File is not present on the provided path")
+
+    else:
+        line_num: int = 0
+        with file_path:
+            reader = csv.reader(file_path, delimiter=sep)
+
+            for line in reader:
+                line_num += 1
+
+                if len(line) != fields:
+                    raise ValueError(
+                        f'{path} - path has length of line: {len(line)} fields on line no: {line_num} expected {fields}')
+
+                if header == False:
+                    yield tuple(line)
+                else:
+                    header = False
 
 
 def main():
-    studenrRepo = Repository(
-        'E:/SSW-810-Special Topics/SSW-810-Yash/Assignment/11')
-    studenrRepo.major_tab()
-    studenrRepo.stud_table()
-    studenrRepo.instruct_table()
-    studenrRepo.student_grade_table_db(
-        'E:/SSW-810-Special Topics/SSW-810-Yash/Assignment/11/810_assginemt11')
+    Repository('/Users/malavshah/HW11')
 
 
 if __name__ == '__main__':
