@@ -1,0 +1,31 @@
+{%extends 'base.html' %}
+
+{%block body %}
+
+<h2> {{Title}} </h2>
+<h3> {{Table_Title}} </h3>
+
+<table border="1">
+    <thread>
+        <tr>
+            <th>Name</th>
+            <th>CWID</th>
+            <th>Grades</th>
+            <th>Courses</th>
+            <th>Instructor</th>
+        </tr>
+    </thread>
+    {% for data in table_temp%}
+    <tr>
+        <td> {{data[0]}} </td>
+        <td> {{data[1]}} </td>
+        <td> {{data[2]}} </td>
+        <td> {{data[3]}} </td>
+        <td> {{data[4]}} </td>
+    </tr>
+
+    {% endfor %}
+
+</table>
+
+{% endblock %}
